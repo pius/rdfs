@@ -17,3 +17,12 @@ require spec_dir_path.parent + 'lib/rdfs'
 # Dir[spec_dir_path + "fixtures/*.rb"].each do |fixture_file|
 #   require fixture_file
 # end
+
+
+require 'rspec'
+# optionally add autorun support
+#require 'rspec/autorun'
+
+Rspec.configure do |c|
+  c.mock_with :rspec
+end

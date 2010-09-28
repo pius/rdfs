@@ -4,7 +4,7 @@ module RDFS
   class Rule
     include RDF
 
-    PLACEHOLDERS = (p = [:aaa, :bbb, :ccc, :ddd, :uuu, :vvv, :xxx, :yyy, :zzz]) + p.collect {|pl| RDF::Literal.new(pl)}
+    PLACEHOLDERS = (p = [:aaa, :bbb, :ccc, :ddd, :uuu, :vvv, :xxx, :yyy, :zzz]) + p.collect {|pl| RDF::Literal.new(pl)} + p.collect {|pl| RDF::Node.new(pl)}
     
     # @return [Array<Statement>]
     attr_reader :antecedents
@@ -46,78 +46,67 @@ module RDFS
     # 
     # @return [Array<Statement>],  :consequents ([]) or nil
     
+    def unitary_match?(antecedent, statement)
+      #raise [antecedent.to_hash.keys - [:context]].inspect
+      [antecedent.to_hash.keys - [:context]].flatten.collect {|place_in_statement|
+        if PLACEHOLDERS.include? antecedent[place_in_statement]
+          statement.to_hash[place_in_statement] == antecedent.to_hash[place_in_statement]
+        else
+          statement.to_hash[place_in_statement]
+        end
+      }.inject(true) { |acc, e| acc and e }
+    end
+    
     def match(statement1, statement2=nil, noisy = false)
+      #first make sure the number of antecedents match the number of arguments
       if (ss = [statement1, statement2].compact.size) != @antecedents.size
         if noisy
           return [nil, "antecedent size (#{@antecedents.size}) doesn't match the arguments size #{ss}"]
         else
-          return nil
+          return [nil, 'wtf']
         end
       end
-
+      
       if @antecedents.size == 1
-        antecedent = @antecedents.first
-        pattern, assignments, slots = antecedent.to_hash, {}, {}
-      
-        pattern.each {|k,v| slots[k] = pattern.delete(k) if PLACEHOLDERS.include?(v) }
-        
-        [:subject, :object, :predicate].select {|k| pattern[k].nil?}.each {|k| 
-          msv = slots[k]
-          assignments[msv] = statement1.send(k)
-          }
-
-        pattern = Statement.new(pattern)
-        ad_hoc_repo = RDF::Repository.new.insert(statement1)
-        if ad_hoc_repo.query(pattern).empty?
-          if noisy
-            return [nil, "pattern was #{pattern.inspect} and did not match #{statement1.inspect}"]
-          else
-            return nil
-          end
-        end
-        return consequents_from(assignments)
-      else
-        pattern1, pattern2 = @antecedents.collect(&:to_hash)
-        slots, assignments, statement1_assignments, statement2_assignments = {}, {}, {}, {}
-        
-        pattern1.each {|k,v| (slots.merge!({"#{k}_1" => pattern1.delete(k)})) if PLACEHOLDERS.include?(v) }
-        pattern2.each {|k,v| (slots.merge!({"#{k}_2" => pattern2.delete(k)})) if PLACEHOLDERS.include?(v) }
-      
-        pattern1, pattern2 = Statement.new(pattern1), Statement.new(pattern2)
-        if (pattern1 === statement1) && (pattern2 === statement2)
-
-          [:subject, :object, :predicate].select {|k| pattern1.to_hash[k].nil?}.each {|k| 
-            msv = slots["#{k.to_s}_1"]
-            assignments[msv] = statement1.send k
-            }
-            
-          [:subject, :object, :predicate].select {|k| pattern2.to_hash[k].nil?}.each {|k| 
-            msv = slots["#{k.to_s}_2"]
-            assignments[msv] = statement2.send k
-            }
-          return consequents_from(assignments)  
-        elsif (pattern1 === statement2) && (pattern2 === statement1)
-          
-          [:subject, :object, :predicate].select {|k| pattern1.to_hash[k].nil?}.each {|k| 
-            msv = slots["#{k.to_s}_1"]
-            assignments[msv] = statement2.send(k)
-          }
-            
-          [:subject, :object, :predicate].select {|k| pattern2.to_hash[k].nil?}.each {|k| 
-            msv = slots["#{k.to_s}_2"]
-            assignments[msv] = statement1.send(k)
-          }
-          return consequents_from(assignments)
+        first_statement = statement1
+        first_antecedent = @antecedents.first
+        if unitary_match?(first_antecedent, first_statement)
+          return consequents.collect {|c| consequent_with_mappings_subbed_in(first_antecedent, c, first_statement)}
         else
-          if noisy
-            return [nil, "pattern was #{pattern.inspect} and did not match #{[statement1, statement2].inspect}"]
-          else
-            return nil
-          end
+          return nil
         end
+      else
+        return nil
+        #only handles single antecedent and statement matches
       end
     end
     alias_method :[], :match
+    
+    def mappings_from(antecedents)
+      binding = {:subject => statement.subject, :predicate => statement.predicate, :object => statement.object}
+    end
+    
+    def consequent_with_mappings_subbed_in(antecedent, consequent, statement)
+      #antecedent_slots = {:subject => antecedent.subject, :predicate => antecedent.predicate, :object => antecedent.object}
+      slots = {:subject => consequent.subject, :predicate => consequent.predicate, :object => consequent.object}
+      binding = {:subject => statement.subject, :predicate => statement.predicate, :object => statement.object}
+      final_statement = {}
+      [:subject, :predicate, :object].each {|p|
+        consequent_value = slots[p]
+        statement_value = binding[p]        
+        # final_statement[p] = PLACEHOLDERS.include?(consequent_value) ? statement_value : consequent_value
+        final_statement[p] = PLACEHOLDERS.include?(consequent_value) ? binding[place_from_antecedent(consequent_value, antecedent)] : consequent_value
+
+      }
+      final_statement = Statement.new final_statement
+      #raise final_statement.subject.class.inspect
+    end
+    
+    
+    def place_from_antecedent(test, antecedent)
+      antecedent.to_hash.each {|k,v| return k if v == test}
+    end
+    
     
     
     def consequents_from(assignments)

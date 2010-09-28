@@ -1,7 +1,7 @@
 require 'rubygems'
-require 'spec'
+require 'rspec'
 require 'rake/clean'
-require 'spec/rake/spectask'
+#require 'spec/rake/spectask'
 require 'pathname'
 
 task :default => [ :spec ]
