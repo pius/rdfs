@@ -71,10 +71,11 @@ Resources
 * <http://rubyforge.org/projects/rdfs/>
 * <http://raa.ruby-lang.org/project/rdfs/>
 
-Author
+Authors
 ------
 
 * [Arto Bendiken](mailto:arto.bendiken@gmail.com) - <http://ar.to/>
+* [Pius Uzamere](mailto:pius@alum.mit.edu) - <http://pius.me/>
 
 License
 -------
