@@ -1,10 +1,40 @@
+module RDF
+  class Statement
+    PLACEHOLDERS = (p = [:aaa, :bbb, :ccc, :ddd, :uuu, :vvv, :xxx, :yyy, :zzz]) + p.collect {|pl| RDF::Literal.new(pl)}  + p.collect {|pl| RDF::Node.new(pl)}
+    
+    #TODO: consider moving these methods into the RDF gem instead of reopening RDF::Statement here
+    def with_substitutions(assignment_hash)
+      return self unless assignment_hash
+      statement_hash = to_hash
+      [:subject, :object, :predicate].each { |place_in_statement|
+        bound_variables, variable = assignment_hash.keys, statement_hash[place_in_statement]
+        statement_hash[place_in_statement] = assignment_hash[variable] if bound_variables.collect(&:to_s).include?(variable.to_s)
+        #TODO: fix node equality so I don't need to use to_s above
+        }
+      Statement.new(statement_hash)
+    end
+  
+    def generality
+      to_hash.values.select {|k| PLACEHOLDERS.include? k}.size
+    end
+    
+    def has_placeholder?
+      to_hash.values.detect {|k| PLACEHOLDERS.include? k}
+    end
+    
+    def specificity
+      3-generality
+    end
+  end
+end
+
 module RDFS
   ##
   # An RDFS entailment rule.
   class Rule
     include RDF
 
-    PLACEHOLDERS = (p = [:aaa, :bbb, :ccc, :ddd, :uuu, :vvv, :xxx, :yyy, :zzz]) + p.collect {|pl| RDF::Literal.new(pl)} + p.collect {|pl| RDF::Node.new(pl)}
+    PLACEHOLDERS = (p = [:aaa, :bbb, :ccc, :ddd, :uuu, :vvv, :xxx, :yyy, :zzz]) + p.collect {|pl| RDF::Literal.new(pl)}  + p.collect {|pl| RDF::Node.new(pl)}
     
     # @return [Array<Statement>]
     attr_reader :antecedents
@@ -33,92 +63,62 @@ module RDFS
         end
       end
     end
-    
-    
-    ##
-    # Evaluates whether a rule pattern matches a set of statements.
-    #
-    # @param  Statement statement1
-    # @param  Statement statement2
-    #
-    # All of the RDFS entailment rules are either pairwise or unitary on antecedents,
-    # so Rule#match takes exactly one or two statements.
-    # 
-    # @return [Array<Statement>],  :consequents ([]) or nil
-    
-    def unitary_match?(antecedent, statement)
-      #raise [antecedent.to_hash.keys - [:context]].inspect
-      [antecedent.to_hash.keys - [:context]].flatten.collect {|place_in_statement|
-        if PLACEHOLDERS.include? antecedent[place_in_statement]
-          statement.to_hash[place_in_statement] == antecedent.to_hash[place_in_statement]
-        else
-          statement.to_hash[place_in_statement]
-        end
-      }.inject(true) { |acc, e| acc and e }
-    end
+
     
     def match(statement1, statement2=nil, noisy = false)
-      #first make sure the number of antecedents match the number of arguments
-      if (ss = [statement1, statement2].compact.size) != @antecedents.size
-        if noisy
-          return [nil, "antecedent size (#{@antecedents.size}) doesn't match the arguments size #{ss}"]
-        else
-          return [nil, 'wtf']
-        end
-      end
+      statements = [statement1, statement2].compact      
       
-      if @antecedents.size == 1
-        first_statement = statement1
-        first_antecedent = @antecedents.first
-        if unitary_match?(first_antecedent, first_statement)
-          return consequents.collect {|c| consequent_with_mappings_subbed_in(first_antecedent, c, first_statement)}
-        else
-          return nil
-        end
+      return false unless antecedents.size == statements.size
+      if antecedents.size == 1
+        return false unless (@subs = self.class.unitary_match(antecedents.first, statements.first))
+        return Rule.substitute(consequents, @subs)
+        
+      elsif (implied_assignments = Rule.unitary_match(antecedents_ordered_by_decreasing_specificity.first, statements.first))
+        q = Rule.unitary_match(antecedents_ordered_by_decreasing_specificity.last.with_substitutions(implied_assignments), 
+                               statements.last.with_substitutions(implied_assignments))
+        assignments = q ? q.merge(implied_assignments) : q
+        return Rule.substitute(consequents, assignments)
+      elsif implied_assignments = Rule.unitary_match(antecedents_ordered_by_decreasing_specificity.first, statements.last)
+        q = Rule.unitary_match(antecedents_ordered_by_decreasing_specificity.last.with_substitutions(implied_assignments), 
+                               statements.first.with_substitutions(implied_assignments))
+        assignments = q ? q.merge(implied_assignments) : q
+        return Rule.substitute(consequents, assignments)
       else
-        return nil
-        #only handles single antecedent and statement matches
+        return false
       end
     end
     alias_method :[], :match
-    
-    def mappings_from(antecedents)
-      binding = {:subject => statement.subject, :predicate => statement.predicate, :object => statement.object}
-    end
-    
-    def consequent_with_mappings_subbed_in(antecedent, consequent, statement)
-      #antecedent_slots = {:subject => antecedent.subject, :predicate => antecedent.predicate, :object => antecedent.object}
-      slots = {:subject => consequent.subject, :predicate => consequent.predicate, :object => consequent.object}
-      binding = {:subject => statement.subject, :predicate => statement.predicate, :object => statement.object}
-      final_statement = {}
-      [:subject, :predicate, :object].each {|p|
-        consequent_value = slots[p]
-        statement_value = binding[p]        
-        # final_statement[p] = PLACEHOLDERS.include?(consequent_value) ? statement_value : consequent_value
-        final_statement[p] = PLACEHOLDERS.include?(consequent_value) ? binding[place_from_antecedent(consequent_value, antecedent)] : consequent_value
-
-      }
-      final_statement = Statement.new final_statement
-      #raise final_statement.subject.class.inspect
-    end
-    
-    
-    def place_from_antecedent(test, antecedent)
-      antecedent.to_hash.each {|k,v| return k if v == test}
-    end
-    
-    
-    
-    def consequents_from(assignments)
-      consequent_patterns = consequents.collect(&:to_hash)
-      output = []
-      consequent_patterns.each_with_index {|c,i|
-        c.each {|k,v| 
-          (c[k] = assignments[v]; output << RDF::Statement.new(c)) if PLACEHOLDERS.include?(v) }        
-      }
-      return output
+  
+  
+    #returns either false or the assignment hash of the match 
+    def self.unitary_match(antecedent, statement)
+      a, s = antecedent.to_hash, statement.to_hash
+      #may need to exclude context
+      bound = {}
+      a.values.zip(s.values) {|antecedent_value, statement_value| 
+        if PLACEHOLDERS.include?(antecedent_value) and !bound[antecedent_value]
+          bound[antecedent_value] = statement_value
+        elsif PLACEHOLDERS.include?(antecedent_value) and bound[antecedent_value]
+          return false unless bound[antecedent_value] == statement_value
+        else
+          return false unless antecedent_value == statement_value
+        end
+        }
+      return bound
     end
 
+    def antecedents_ordered_by_decreasing_specificity
+      a ||= antecedents.sort_by(&:generality)
+    end
+  
+    def self.substitute(consequents, assignment_hash)
+      return nil if assignment_hash.nil?
+      c = consequents.collect{|c| c.with_substitutions(assignment_hash)}
+      return c.detect(&:has_placeholder?) ? false : c
+      
+      #perhaps add an integrity check to Rule to make sure that the consequents are fully substituted by the antecedents
+    end
+    
     ##
     # Defines an antecedent for this rule.
     #
@@ -193,6 +193,5 @@ module RDFS
       def self.consequent(s, p, o)
         @@consequents[self] << RDF::Statement.new(s, p, o)
       end
-
   end
 end
