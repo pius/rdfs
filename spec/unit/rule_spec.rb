@@ -1,8 +1,10 @@
-require 'spec_helper'
+#require 'spec_helper'
 require 'rdf'
+
+require 'rdfs'
 require 'rdfs/rule'
 include RDF
-include RDFS::Semantics
+include ::RDFS::Semantics
 
 describe ::RDF::Statement do
   it "should be able to substitute a mapping into itself" do
